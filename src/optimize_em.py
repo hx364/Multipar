@@ -3,7 +3,7 @@ import numpy as np
 from utils import read_data, expand, compute_neglog
 import numpy as np
 import matplotlib.pyplot as plt
-from data_generate import log_scale
+from data_generate import log_scale, sin_scale, generate_random
 
 #############################################
 ##This script is intended to optimize the linear regression with parametric changing variacne
@@ -23,7 +23,7 @@ def evaluate_nl(X, y, P, W):
     f_2 = np.exp(-(np.dot(X, P)))*((y-np.dot(X, W))**2)
     return sum(f_1+f_2)/2.
 
-def optimize_par(X, y, X_val, y_val, tol=0.0001):
+def optimize_par(X, y, X_val, y_val, tol=0.0000001):
 
     #get stats and initialize P
     num_instances, num_feat = X.shape
@@ -31,9 +31,9 @@ def optimize_par(X, y, X_val, y_val, tol=0.0001):
     P = np.ones(num_feat)
     X_sum = np.sum(X, axis=0)
 
-    print evaluate_nl(X, y, P, W)
+    #print evaluate_nl(X, y, P, W)
 
-    for i in range(5000):
+    for i in range(50000):
         #print "Iter %r" %i
         #optimize on W
         old_loss_func = evaluate_nl(X, y, P, W)
@@ -70,6 +70,9 @@ def optimize_on_P(X, P, m_pseudo, alpha=0.01, tol=0.001):
     for i in range(200):
         old_func_val = func_P(X, P, m_pseudo)
         grad_P = X_sum - np.dot(X.T, np.exp(m_pseudo-np.dot(X, P)))
+        #P = P - grad_P*alpha
+        while func_P(X, P-grad_P*alpha, m_pseudo) > func_P(X, P, m_pseudo):
+            grad_P = grad_P/2.
         P = P - grad_P*alpha
 
         if func_P(X, P+grad_P*alpha, m_pseudo) -  func_P(X, P, m_pseudo) <tol:
@@ -90,7 +93,7 @@ def func_P(X, P, m_pseudo):
     return f_val
 
 
-def viz_clf(x_train, x_test, y_train, y_test, W, P):
+def viz_clf(x_train, x_test, y_train, y_test, W, P, n_end):
     """
     visualize the data, with classifier embedded
     """
@@ -105,18 +108,18 @@ def viz_clf(x_train, x_test, y_train, y_test, W, P):
     #visualize the model in plot
     #plot mean line
     x_c = np.array(range(500))/500.
-    y_c = np.dot(expand(x_c, 0, 3), W)
+    y_c = np.dot(expand(x_c, 0, n_end), W)
 
     #plot variance line
-    variance_c = np.exp(np.dot(expand(x_c, 0, 3), P))
+    variance_c = np.exp(np.dot(expand(x_c, 0, n_end), P))
 
     plt.plot(x_c, y_c, 'b')
     plt.plot(x_c, y_c+np.sqrt(variance_c),'r')
     plt.plot(x_c, y_c-np.sqrt(variance_c), 'r')
 
     #print the nll value
-    mean_test = np.dot(expand(x_test, 0, 3), W)
-    var_test = np.exp(np.dot(expand(x_test, 0, 3), P))
+    mean_test = np.dot(expand(x_test, 0, n_end), W)
+    var_test = np.exp(np.dot(expand(x_test, 0, n_end), P))
     nll = np.sum(compute_neglog(y_test[i], mean_test[i], var_test[i]) for i in range(len(y_test)))
 
     true_mean = np.sin(5*x_test)
@@ -136,15 +139,71 @@ def plot_var(P):
     plt.legend([p1, p2], ['True Variance', 'Estimated Variance'])
     plt.show()
 
+def true_nll_loss(x, y, mean_func, var_func):
+    #u = np.sin(5*x)
+    u = mean_func(x)
+    #var = (np.log2(1+0.5*x))**2
+    var = var_func(x)**2
+    f_1 = np.sum(np.log(var)+(y-u)**2/var)/2
+    return f_1
+
+def viz_original(x_train, x_test, y_train, y_test):
+    #x = np.concatenate((x_train, x_test))
+    #y = np.concatenate((y_train, y_test))
+    plt.scatter(x_train, y_train, color='red')
+    plt.scatter(x_test, y_test, color='blue')
+    #color = ['r']*len(x_train)+['b']*len(y_train)
+    #plt.scatter(x, y, c=color, alpha=0.5)
+    plt.legend(['Training', 'Test'])
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.show()
+    plt.savefig('fig/func_change_cor.jpg')
+    #plt.title('Data fitted with Changing parametric variance')
+
+
+def viz_par(mean_func, var_func, W, P, n_end):
+    #plot mu(x) and var(x) as x increase
+    x = np.array(range(500))/500.
+    mean_x = mean_func(x)
+    var_x = var_func(x)
+
+    mean_test = np.dot(expand(x, 0, n_end), W)
+    var_test = np.exp(np.dot(expand(x, 0, n_end), P))
+
+    plt.plot(x, mean_x, 'b')
+    plt.plot(x, mean_test, 'b--')
+    plt.plot(x, var_x, 'r')
+    plt.plot(x, var_test, 'r--')
+    plt.xlabel('x')
+    plt.ylabel('parameters')
+    plt.legend(['mean(x)', 'Prediction of mean', 'std_err(x)', 'Prediction of std_err'], loc=3)
+    plt.show()
+
+
+
 
 
 def main():
-    x_train, x_test, y_train, y_test = read_data('func_change_cor.csv')
+    targetFn, varFn = generate_random()
+    x_train, x_test, y_train, y_test = read_data('func_change_cor_3.csv')
+    viz_original(x_train, x_test, y_train, y_test)
 
-    W, P = optimize_par(expand(x_train, 0, 3), y_train, expand(x_test, 0, 3), y_test) # W.T*X is mean function, exp(P.t*X) is scale function
+    n_end = 5
+
+    W, P = optimize_par(expand(x_train, 0, n_end), y_train, expand(x_test, 0, n_end), y_test) # W.T*X is mean function, exp(P.t*X) is scale function
     #print W
-    viz_clf(x_train, x_test, y_train, y_test, W, P)
-    plot_var(P)
+    viz_clf(x_train, x_test, y_train, y_test, W, P, n_end)
+    #plot_var(P)
+    #viz_par(sin_scale, log_scale, W, P, 5)
+    #viz_par(lambda x: np.sin(2.5*x*3.14)*np.sin(1.5*x*3.14), lambda x: 0.01+0.25*(1-np.sin(2.5*x*3.14))**2, W, P, n_end)
+    viz_par(targetFn, varFn, W, P, 5)
+
+    #print true_nll_loss(x_train, y_train, lambda x: np.sin(2.5*x*3.14)*np.sin(1.5*x*3.14), lambda x: 0.01+0.25*(1-np.sin(2.5*x*3.14))**2)
+    #print true_nll_loss(x_test, y_test, lambda x: np.sin(2.5*x*3.14)*np.sin(1.5*x*3.14), lambda x: 0.01+0.25*(1-np.sin(2.5*x*3.14))**2)
+    print true_nll_loss(x_train, y_train, targetFn, varFn)
+    print true_nll_loss(x_test, y_test, targetFn, varFn)
+
 
 main()
 

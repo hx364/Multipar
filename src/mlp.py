@@ -4,6 +4,7 @@ import theano
 import theano.tensor as T
 import numpy as np
 import matplotlib.pyplot as plt
+from data_generate import sin_scale, log_scale, generate_random
 from utils import read_data, expand, compute_neglog
 
 class Layer(object):
@@ -91,23 +92,6 @@ class MLP(object):
 
 
 def gradient_updates_momentum(cost, params, learning_rate, momentum):
-    '''
-    Compute updates for gradient descent with momentum
-
-    :parameters:
-        - cost : theano.tensor.var.TensorVariable
-            Theano cost function to minimize
-        - params : list of theano.tensor.var.TensorVariable
-            Parameters to compute gradient against
-        - learning_rate : float
-            Gradient descent learning rate
-        - momentum : float
-            Momentum parameter, should be at least 0 (standard gradient descent) and less than 1
-
-    :returns:
-        updates : list
-            List of updates, one for each parameter
-    '''
     # Make sure momentum is a sane value
     assert momentum < 1 and momentum >= 0
     # List of update steps for each parameter
@@ -125,6 +109,8 @@ def gradient_updates_momentum(cost, params, learning_rate, momentum):
         # Note that we don't need to derive backpropagation to compute updates - just use T.grad!
         updates.append((param_update, momentum*param_update + (1. - momentum)*T.grad(cost, param)))
     return updates
+
+
 
 
 def mlp_train(x_train, x_test, y_train, y_test):
@@ -152,8 +138,9 @@ def mlp_train(x_train, x_test, y_train, y_test):
     mlp_target = T.vector('mlp_target')
     n_iter = T.scalar('n_iter')
 
-    learning_rate = 0.005
-    momentum = 0.5
+    learning_rate = 0.1
+    momentum = 0.0
+    train_cost=1000000
 
     # Create a function for computing the cost of the network given an input
     cost = mlp.nll_error(mlp_input, mlp_target)
@@ -163,15 +150,34 @@ def mlp_train(x_train, x_test, y_train, y_test):
 
     iteration = 0
     div = 1
-    max_iteration = 10000
+    max_iteration = 30000
+
 
     while iteration < max_iteration:
         #Learning rate updated every 10 epoches
+        """
         if iteration < 1000:
             div = iteration/75+1
         else:
             div = 10
-        train_cost = train(x_train, y_train, div)
+        """
+
+        #line search
+        init_value = []
+        for param in mlp.params:
+            init_value.append(param.get_value())
+
+        train(x_train, y_train, div)
+        while mlp.nll_error(x_train, y_train).eval() >= train_cost:
+            print "line search, change learning rate"
+            div = div+1
+            i=0
+            for param in mlp.params:
+                param.set_value(init_value[i])
+                i+=1
+            train(x_train, y_train, div)
+
+        train_cost = mlp.nll_error(x_train, y_train).eval()
         val_cost = mlp.nll_error(x_test, y_test).eval()
 
         # Get the current network output for all points in the training set
@@ -181,9 +187,10 @@ def mlp_train(x_train, x_test, y_train, y_test):
 
     return mlp
 
-#
+##implement line search for step size
 
-def viz_clf(x_train, x_test, y_train, y_test, mlp):
+
+def viz_clf(x_train, x_test, y_train, y_test, mean_func, var_func, number, mlp):
     """
     visualize the data, with classifier embedded
     """
@@ -198,7 +205,7 @@ def viz_clf(x_train, x_test, y_train, y_test, mlp):
     #visualize the model in plot
     #plot mean line
     x_c = np.array(range(500))/500.
-    y_c = mlp.output(expand(x_c,1,1).T).eval()
+    y_c = mlp.output(expand(x_c,1,number).T).eval()
     #print y_c
     mean_c = y_c[0]
     variance_c = np.exp(y_c[1])
@@ -207,21 +214,63 @@ def viz_clf(x_train, x_test, y_train, y_test, mlp):
     plt.plot(x_c, mean_c, 'b')
     plt.plot(x_c, mean_c+np.sqrt(variance_c),'r')
     plt.plot(x_c, mean_c-np.sqrt(variance_c), 'r')
-
-
-    #print the nll value
-    y_pred = mlp.output(expand(x_test,1,1).T).eval()
-    mean_test, var_test = y_pred[0], y_pred[1]
-    nll = np.sum(compute_neglog(y_test[i], mean_test[i], var_test[i]) for i in range(len(y_test)))
-    print "NNL on test data: %r" %(nll)
-
     plt.show()
 
-def main():
-    x_train, x_test, y_train, y_test = read_data('func_change_cor.csv')
-    mlp = mlp_train(expand(x_train,1,1).T, expand(x_test,1,1).T, y_train, y_test)
 
-    viz_clf(x_train, x_test, y_train, y_test, mlp)
+    #visualize par
+    mean_x = mean_func(x_c)
+    var_x = var_func(x_c)
+    y_pred = mlp.output(expand(x_c,1,number).T).eval()
+    mean_test, var_test = y_pred[0], np.exp(y_pred[1])
+
+    plt.plot(x_c, mean_x, 'b')
+    plt.plot(x_c, mean_test, 'b--')
+    plt.plot(x_c, var_x, 'r')
+    plt.plot(x_c, var_test, 'r--')
+    plt.xlabel('x')
+    plt.ylabel('parameters')
+    plt.legend(['mean(x)', 'Prediction of mean', 'std_err(x)', 'Prediction of std_err'], loc=3)
+    plt.show()
+
+    #nll = np.sum(compute_neglog(y_test[i], mean_test[i], var_test[i]) for i in range(len(y_test)))
+    #print "NNL on test data: %r" %(nll)
+
+
+def main():
+    x_train, x_test, y_train, y_test = read_data('func_change_cor_3.csv')
+    np.random.seed(seed=10)
+    s_end = 3
+    targetFn, varFn = generate_random()
+    mlp = mlp_train(expand(x_train,1,s_end).T, expand(x_test,1,s_end).T, y_train, y_test)
+    #viz_clf(x_train, x_test, y_train, y_test, lambda x: np.sin(2.5*x*3.14)*np.sin(1.5*x*3.14), lambda x: 0.01+0.25*(1-np.sin(2.5*x*3.14))**2,s_end, mlp)
+    viz_clf(x_train, x_test, y_train, y_test, targetFn, varFn, s_end, mlp)
 
 
 main()
+
+
+class BankAccount:
+    """ Class definition modeling the behavior of a simple bank account """
+
+    def __init__(self, initial_balance):
+        """Creates an account with the given balance."""
+        self.balance = initial_balance
+        self.fees = 0
+    def deposit(self, amount):
+        """Deposits the amount into the account."""
+        self.balance += amount
+    def withdraw(self, amount):
+        """
+        Withdraws the amount from the account.  Each withdrawal resulting in a
+        negative balance also deducts a penalty fee of 5 dollars from the balance.
+        """
+        self.balance-=amount
+        if self.balance<0:
+            self.balance-=5
+            self.fees+=5
+    def get_balance(self):
+        """Returns the current balance in the account."""
+        return self.balance
+    def get_fees(self):
+        """Returns the total fees ever deducted from the account."""
+        return self.fees
